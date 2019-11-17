@@ -16,21 +16,77 @@
    along with Ezra Project. See the file COPYING.
    If not, see <http://www.gnu.org/licenses/>. */
 
+const path = require('path');
+const crypto = require('crypto');
+
 class BibleBrowserCommunicationController {
   constructor() {
-    this.verseListTemplate = null;
+    this.templateAvailable = false;
+    this.templateEngine = null;
+    this.receivedVerseLists = [];
   }
 
-  getTemplate() {
-    if (this.verseListTemplate == null) {
-      var pug = require('pug');
-      var path = require('path');
-      
-      var verse_list_template_file = path.join(__dirname, '../../templates/verse_list.pug');
-      this.verseListTemplate = pug.compileFile(verse_list_template_file);
+  async sleep(milliseconds) {
+    return new Promise(resolve => setTimeout(resolve, milliseconds));
+  }
+
+  init() {
+    if (!this.templateAvailable) {
+      this.templateEngine = new Worker(path.resolve(__dirname, 'template_engine.js'));
+
+      this.templateEngine.addEventListener('message', (e) => {
+        var data = e.data;
+
+        switch (data.cmd) {
+          case "compileTemplate":
+            this.templateAvailable = true;
+            break;
+
+          case "getVerses":
+            this.processVerseList(data.verseList, data.token);
+            break;
+          
+          default:
+            console.error("Received unknown cmd callback " + data.cmd);
+        }
+      }, false);
+
+      this.templateEngine.postMessage({ cmd: "compileTemplate" });
+    }
+  }
+
+  processVerseList(verseList, token) {
+    console.log("Received verse list for token " + token);
+    this.receivedVerseLists[token] = verseList;
+  }
+
+  async waitForTemplate() {
+    var maxIterations = 100;
+    var it = 0;
+
+    while (this.templateAvailable == false && it < maxIterations) {
+      await this.sleep(50);
+      it += 1;
+    }
+  }
+
+  async getVersesFromTemplateEngine(spec) {
+    await this.waitForTemplate();
+
+    spec = JSON.parse(JSON.stringify(spec));
+    var token = crypto.randomBytes(32).toString('hex');
+    this.templateEngine.postMessage({ cmd: "getVerses", spec: spec, token: token });
+
+    var maxIterations = 100;
+    var it = 0;
+    while (!(token in this.receivedVerseLists) && it < maxIterations) {
+      await this.sleep(25);
+      it += 1;
     }
 
-    return this.verseListTemplate;
+    var verseList = this.receivedVerseLists[token];
+    delete this.receivedVerseLists[token];
+    return verseList;
   }
 
   async request_book_text(tab_index,
@@ -57,9 +113,7 @@ class BibleBrowserCommunicationController {
     var verseTags = await bibleBook.getVerseTags(currentBibleTranslationId);
     var groupedVerseTags = models.VerseTag.groupVerseTagsByVerse(verseTags);
 
-    var verseListTemplate = this.getTemplate();
-
-    var verses_as_html = verseListTemplate({
+    var verses_as_html = await this.getVersesFromTemplateEngine({
       verseListId: current_tab_id,
       renderVerseMetaInfo: true,
       renderBibleBookHeaders: false,
@@ -139,14 +193,14 @@ class BibleBrowserCommunicationController {
     
     if (render_type == "html") {
       
-      this.get_verses_as_html(current_tab_id,
-                              bibleBooks,
-                              bibleBookStats,
-                              groupedVerseTags,
-                              verses,
-                              render_function,
-                              requestedBookId <= 0,
-                              renderVerseMetaInfo);
+      await this.get_verses_as_html(current_tab_id,
+                                    bibleBooks,
+                                    bibleBookStats,
+                                    groupedVerseTags,
+                                    verses,
+                                    render_function,
+                                    requestedBookId <= 0,
+                                    renderVerseMetaInfo);
       
     } else if (render_type == "docx") {
       render_function(bibleBooks, groupedVerseTags, verses);
@@ -194,24 +248,22 @@ class BibleBrowserCommunicationController {
 
     if (render_type == "html") {
       
-      this.get_verses_as_html(current_tab_id,
-                              bibleBooks,
-                              bibleBookStats,
-                              groupedVerseTags,
-                              verses,
-                              render_function,
-                              true,
-                              renderVerseMetaInfo);
+      await this.get_verses_as_html(current_tab_id,
+                                    bibleBooks,
+                                    bibleBookStats,
+                                    groupedVerseTags,
+                                    verses,
+                                    render_function,
+                                    true,
+                                    renderVerseMetaInfo);
     
     } else if (render_type == "docx") {
       render_function(bibleBooks, groupedVerseTags, verses);
     }
   }
 
-  get_verses_as_html(current_tab_id, bibleBooks, bibleBookStats, groupedVerseTags, verses, render_function, renderBibleBookHeaders=true, renderVerseMetaInfo=true) {
-    var verseListTemplate = this.getTemplate();
-
-    var verses_as_html = verseListTemplate({
+  async get_verses_as_html(current_tab_id, bibleBooks, bibleBookStats, groupedVerseTags, verses, render_function, renderBibleBookHeaders=true, renderVerseMetaInfo=true) {
+    var verses_as_html = this.getVersesFromTemplateEngine({
       verseListId: current_tab_id,
       renderBibleBookHeaders: renderBibleBookHeaders,
       renderVerseMetaInfo: renderVerseMetaInfo,

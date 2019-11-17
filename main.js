@@ -64,6 +64,7 @@ function createWindow () {
                                   title: "Ezra Project " + app.getVersion(),
                                   webPreferences: {
                                     nodeIntegration: true,
+                                    nodeIntegrationInWorker: true,
                                     preload: preloadScript
                                   }});
   

@@ -26,6 +26,7 @@ function BibleBrowserController() {
   this.book_menu_is_opened = false;
   this.current_cr_verse_id = null;
   this.communication_controller = new BibleBrowserCommunicationController();
+  this.communication_controller.init();
 
   // not used??
   this.get_book_short_title = function(book_long_title) {
